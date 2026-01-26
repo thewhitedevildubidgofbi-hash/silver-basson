@@ -99,14 +99,17 @@ jobs:
           
           
           # Build rclone config dynamically using refresh token (PERMANENT - never expires!)
-          # Build config line by line to avoid here-string indentation issues
+          # Build config line by line - use single quotes to avoid escaping issues
+          $refreshToken = $env:GDRIVE_REFRESH_TOKEN
+          $tokenJson = '{"access_token":"","token_type":"Bearer","refresh_token":"' + $refreshToken + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          
           $config = "[gdrive2]`n"
           $config += "type = drive`n"
           $config += "client_id = $env:GDRIVE_CLIENT_ID`n"
           $config += "client_secret = $env:GDRIVE_CLIENT_SECRET`n"
           $config += "scope = drive`n"
-          $config += "token = {`"access_token`":`"`",`"token_type`":`"Bearer`",`"refresh_token`":`"$env:GDRIVE_REFRESH_TOKEN`",`"expiry`":`"2000-01-01T00:00:00.000000000+00:00`"}`n"
-          $config += "team_drive = `n"
+          $config += "token = $tokenJson`n"
+          $config += "team_drive =`n"
           
           $config | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force -NoNewline
           Write-Host "[OK] Rclone config created with refresh token" -ForegroundColor Green
