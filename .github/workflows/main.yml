@@ -100,14 +100,14 @@ jobs:
           # Build rclone config dynamically using refresh token (PERMANENT - never expires!)
           if ($env:GDRIVE_CLIENT_ID -and $env:GDRIVE_CLIENT_SECRET -and $env:GDRIVE_REFRESH_TOKEN) {
               $configContent = @"
-[gdrive2]
-type = drive
-client_id = $env:GDRIVE_CLIENT_ID
-client_secret = $env:GDRIVE_CLIENT_SECRET
-scope = drive
-token = {"access_token":"","token_type":"Bearer","refresh_token":"$env:GDRIVE_REFRESH_TOKEN","expiry":"2000-01-01T00:00:00.000000000+00:00"}
-team_drive = 
-"@
+              [gdrive2]
+              type = drive
+              client_id = $env:GDRIVE_CLIENT_ID
+              client_secret = $env:GDRIVE_CLIENT_SECRET
+              scope = drive
+              token = {"access_token":"","token_type":"Bearer","refresh_token":"$env:GDRIVE_REFRESH_TOKEN","expiry":"2000-01-01T00:00:00.000000000+00:00"}
+              team_drive = 
+              "@
               $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
               Write-Host "[OK] Rclone config created with refresh token" -ForegroundColor Green
               Write-Host "[INFO] Rclone will auto-refresh access token on first use" -ForegroundColor Cyan
