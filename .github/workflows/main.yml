@@ -1,4 +1,4 @@
-name: Windows RDP Learning Environment
+name: Windows RDP Learning Environment (Fixed)
 
 on:
   workflow_dispatch:
@@ -28,19 +28,11 @@ jobs:
       - name: Install Tailscale
         run: |
           Write-Host "=== Installing Tailscale ===" -ForegroundColor Cyan
-          
-          # Download Tailscale installer
           $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
           $installerPath = "$env:TEMP\tailscale-setup.exe"
-          
           Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
-          
-          # Install silently
           Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
-          
-          # Wait for installation to complete
           Start-Sleep -Seconds 10
-          
           Write-Host "[OK] Tailscale installed successfully" -ForegroundColor Green
         shell: powershell
 
@@ -49,113 +41,72 @@ jobs:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           Write-Host "=== Connecting to Tailscale Network ===" -ForegroundColor Cyan
-          
           $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
-          
-          # Authenticate
           & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-runner-rdp"
           
-          # Get Tailscale IP
           Start-Sleep -Seconds 5
           $tailscaleIP = & $tailscalePath ip -4
           
-          Write-Host ""
           Write-Host "====================================================" -ForegroundColor Yellow
-          Write-Host "    TAILSCALE CONNECTION ESTABLISHED" -ForegroundColor Yellow
+          Write-Host "    TAILSCALE IP: $tailscaleIP" -ForegroundColor Green
           Write-Host "====================================================" -ForegroundColor Yellow
-          Write-Host "  Tailscale IP: $tailscaleIP" -ForegroundColor Green
-          Write-Host "====================================================" -ForegroundColor Yellow
-          Write-Host ""
-          
-          # Save IP for later steps
           echo "TAILSCALE_IP=$tailscaleIP" >> $env:GITHUB_ENV
         shell: powershell
 
-      - name: Install and Configure Rclone
-        env:
-          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
-          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
-          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+      - name: Install and Configure Rclone (DIRECT CREDENTIALS)
         run: |
           Write-Host "=== Installing Rclone ===" -ForegroundColor Cyan
           
-          # Download Rclone
+          # 1. Download and Install Rclone
           $rcloneUrl = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
           $zipPath = "$env:TEMP\rclone.zip"
-          
           Invoke-WebRequest -Uri $rcloneUrl -OutFile $zipPath -UseBasicParsing
-          
-          # Extract to C:\rclone
           Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\rclone-temp" -Force
-          
-          # Move executable to C:\rclone
           $extractedFolder = (Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1).FullName
           New-Item -Path "C:\rclone" -ItemType Directory -Force | Out-Null
           Copy-Item -Path "$extractedFolder\rclone.exe" -Destination "C:\rclone\rclone.exe" -Force
           
-          # Create rclone config directory
+          # 2. Setup Config Directory
           $rcloneConfigDir = "$env:APPDATA\rclone"
           New-Item -Path $rcloneConfigDir -ItemType Directory -Force | Out-Null
-          
-          # Build rclone config - write each line separately to avoid escaping issues
           $configFile = "$rcloneConfigDir\rclone.conf"
           
-          # Create the config file line by line
+          # 3. DIRECT CREDENTIALS (NO SECRETS REQUIRED)
+          # These are the exact values you provided in the chat
+          $clientID = "650970585234-2f4ghsmh8eb81btgbedlhdduh21bgshk.apps.googleusercontent.com"
+          $clientSecret = "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"
+          $refreshToken = "1//0gRe_ZYuLl8HACgYIARAAGBASNwF-L9IrT7y9R9O_zi2kY2LZyzxVH4OKO9kJVw8gluV6RZmowxgE22hR6cdxf07o8bImTsct4k0"
+          
+          # 4. Write Config File line-by-line
           Set-Content -Path $configFile -Value "[gdrive2]"
           Add-Content -Path $configFile -Value "type = drive"
-          Add-Content -Path $configFile -Value "client_id = $env:GDRIVE_CLIENT_ID"
-          Add-Content -Path $configFile -Value "client_secret = $env:GDRIVE_CLIENT_SECRET"
+          Add-Content -Path $configFile -Value "client_id = $clientID"
+          Add-Content -Path $configFile -Value "client_secret = $clientSecret"
           Add-Content -Path $configFile -Value "scope = drive"
           
-          # Build token JSON carefully
-          $rt = $env:GDRIVE_REFRESH_TOKEN
-          $tokenLine = 'token = {"access_token":"","token_type":"Bearer","refresh_token":"' + $rt + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          # 5. Construct Token JSON
+          # We manually build the JSON string to avoid PowerShell parsing errors
+          # We use Trim() to ensure no hidden spaces exist
+          $tokenJSON = '{"access_token":"","token_type":"Bearer","refresh_token":"' + $refreshToken.Trim() + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          $tokenLine = "token = $tokenJSON"
           Add-Content -Path $configFile -Value $tokenLine
           Add-Content -Path $configFile -Value "team_drive ="
           
-          # Show the config for debugging
-          Write-Host "[OK] Rclone config created:" -ForegroundColor Green
-          Get-Content $configFile
-          Write-Host ""
-          Write-Host "[OK] Rclone installed successfully" -ForegroundColor Green
+          Write-Host "[OK] Rclone config written with direct credentials" -ForegroundColor Green
         shell: powershell
 
       - name: Mount Google Drive
         run: |
           Write-Host "=== Mounting Google Drive as Z: ===" -ForegroundColor Cyan
           
-          # First, test rclone connection and trigger token refresh
-          Write-Host "Testing rclone connection..." -ForegroundColor Cyan
-          $testResult = & C:\rclone\rclone.exe lsd gdrive2: --max-depth 1 2>&1
-          $testExitCode = $LASTEXITCODE
-          
-          if ($testExitCode -ne 0) {
-              Write-Host "ERROR: Rclone connection test failed!" -ForegroundColor Red
-              Write-Host "Exit code: $testExitCode" -ForegroundColor Red
-              Write-Host "Output: $testResult" -ForegroundColor Red
-              Write-Host ""
-              Write-Host "=== Rclone Config Content ===" -ForegroundColor Yellow
-              Get-Content "$env:APPDATA\rclone\rclone.conf"
-              Write-Host "=== End Config ===" -ForegroundColor Yellow
-              exit 1
-          }
-          
-          Write-Host "[OK] Rclone connection successful!" -ForegroundColor Green
-          Write-Host "Directories found:" -ForegroundColor Cyan
-          Write-Host $testResult
-          
-          # Install WinFsp (required for mount on Windows)
-          Write-Host "Installing WinFsp for mount support..." -ForegroundColor Cyan
+          # Install WinFsp (Required for mounting)
           $winfspUrl = "https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi"
           $winfspPath = "$env:TEMP\winfsp.msi"
           Invoke-WebRequest -Uri $winfspUrl -OutFile $winfspPath -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i", $winfspPath, "/quiet", "/norestart" -Wait
-          Write-Host "[OK] WinFsp installed" -ForegroundColor Green
           
-          # Now mount the drive
-          Write-Host "Starting rclone mount..." -ForegroundColor Cyan
+          # Mount Drive
           $logFile = "$env:TEMP\rclone_mount.log"
-          
           Start-Process -FilePath "C:\rclone\rclone.exe" -ArgumentList @(
               "mount", "gdrive2:", "Z:",
               "--volname", "Google Drive",
@@ -164,49 +115,32 @@ jobs:
               "--log-level", "INFO"
           ) -WindowStyle Hidden
           
-          # Wait for mount
-          Write-Host "Waiting for mount to complete..." -ForegroundColor Cyan
+          # Wait for mount to initialize
+          Write-Host "Waiting for Z: drive..."
           Start-Sleep -Seconds 15
           
           if (Test-Path "Z:\") {
               Write-Host "[OK] Google Drive mounted successfully as Z:" -ForegroundColor Green
               Get-ChildItem Z:\ -ErrorAction SilentlyContinue | Select-Object -First 5
           } else {
-              Write-Host "[ERROR] Z: drive not mounted!" -ForegroundColor Red
-              Write-Host "=== Rclone Mount Log ===" -ForegroundColor Yellow
-              if (Test-Path $logFile) {
-                  Get-Content $logFile -Tail 30
-              } else {
-                  Write-Host "No log file found"
-              }
-              Write-Host "=== End Log ===" -ForegroundColor Yellow
+              Write-Host "[ERROR] Z: drive failed to mount." -ForegroundColor Red
+              if (Test-Path $logFile) { Get-Content $logFile -Tail 20 }
+              exit 1
           }
         shell: powershell
 
       - name: Enable and Configure RDP
         run: |
           Write-Host "=== Enabling RDP Access ===" -ForegroundColor Cyan
-          
-          # Enable Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          
-          # Enable RDP in Windows Firewall
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          # Set RDP authentication level (allow less secure for easier testing)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          
-          Write-Host "[OK] RDP enabled successfully" -ForegroundColor Green
+          Write-Host "[OK] RDP enabled" -ForegroundColor Green
         shell: powershell
 
-      - name: Set RDP Password and Display Connection Info
+      - name: Set RDP Password and Display Info
         run: |
-          Write-Host "=== Setting Up RDP Credentials ===" -ForegroundColor Cyan
-          
-          # Set constant password (meets Windows complexity: uppercase, lowercase, number, special char)
           $password = "Pass@124421sg"
-          
-          # Set password for current user (runneradmin)
           $username = $env:USERNAME
           net user $username $password
           
@@ -217,56 +151,31 @@ jobs:
           Write-Host "  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
           Write-Host "  Username:    $username" -ForegroundColor Cyan
           Write-Host "  Password:    $password" -ForegroundColor Cyan
-          Write-Host "  Z: Drive:    Google Drive Stream (Mounted)" -ForegroundColor Green
+          Write-Host "  Z: Drive:    Google Drive (Mounted)" -ForegroundColor Green
           Write-Host "----------------------------------------------------" -ForegroundColor Magenta
           Write-Host "  To SHUTDOWN: Create C:\close.txt file" -ForegroundColor Yellow
           Write-Host "====================================================" -ForegroundColor Magenta
-          Write-Host ""
         shell: powershell
 
-      - name: Keep Alive and Monitor for Shutdown Signal
+      - name: Keep Alive
         run: |
           Write-Host "=== Environment is Running ===" -ForegroundColor Green
-          Write-Host "Monitoring for shutdown signal (C:\close.txt)..." -ForegroundColor Cyan
-          Write-Host ""
-          
           $startTime = Get-Date
           $maxHours = [int]"${{ github.event.inputs.runtime_hours || '6' }}"
           $maxMinutes = $maxHours * 60
           
           while ($true) {
-              # Check if close.txt exists
               if (Test-Path "C:\close.txt") {
-                  Write-Host ""
-                  Write-Host "====================================================" -ForegroundColor Red
-                  Write-Host "    SHUTDOWN SIGNAL DETECTED (close.txt)" -ForegroundColor Red
-                  Write-Host "====================================================" -ForegroundColor Red
-                  Write-Host ""
-                  Write-Host "Cleaning up and shutting down..." -ForegroundColor Yellow
+                  Write-Host "Shutdown signal detected." -ForegroundColor Yellow
                   break
               }
               
-              # Check elapsed time
               $elapsed = (Get-Date) - $startTime
-              $minutesElapsed = [int]$elapsed.TotalMinutes
-              $minutesRemaining = $maxMinutes - $minutesElapsed
-              
-              if ($minutesRemaining -le 0) {
-                  Write-Host ""
-                  Write-Host "====================================================" -ForegroundColor Yellow
-                  Write-Host "     MAXIMUM RUNTIME REACHED ($maxHours hours)" -ForegroundColor Yellow
-                  Write-Host "====================================================" -ForegroundColor Yellow
-                  Write-Host ""
+              if ($elapsed.TotalMinutes -ge $maxMinutes) {
+                  Write-Host "Time limit reached." -ForegroundColor Yellow
                   break
-              }
-              
-              # Display status every 5 minutes
-              if ($minutesElapsed -gt 0 -and $minutesElapsed % 5 -eq 0) {
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Status: Running | Elapsed: $minutesElapsed min | Remaining: $minutesRemaining min" -ForegroundColor Gray
               }
               
               Start-Sleep -Seconds 30
           }
-          
-          Write-Host "[OK] Workflow completed" -ForegroundColor Green
         shell: powershell
