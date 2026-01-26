@@ -41,7 +41,7 @@ jobs:
           # Wait for installation to complete
           Start-Sleep -Seconds 10
           
-          Write-Host "✓ Tailscale installed successfully" -ForegroundColor Green
+          Write-Host "[OK] Tailscale installed successfully" -ForegroundColor Green
         shell: powershell
 
       - name: Connect to Tailscale Network
@@ -60,12 +60,11 @@ jobs:
           $tailscaleIP = & $tailscalePath ip -4
           
           Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Yellow
-          Write-Host "║       TAILSCALE CONNECTION ESTABLISHED          ║" -ForegroundColor Yellow
-          Write-Host "║                                                  ║" -ForegroundColor Yellow
-          Write-Host "║  Tailscale IP: $tailscaleIP" -ForegroundColor Green
-          Write-Host "║                                                  ║" -ForegroundColor Yellow
-          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
+          Write-Host "====================================================" -ForegroundColor Yellow
+          Write-Host "    TAILSCALE CONNECTION ESTABLISHED" -ForegroundColor Yellow
+          Write-Host "====================================================" -ForegroundColor Yellow
+          Write-Host "  Tailscale IP: $tailscaleIP" -ForegroundColor Green
+          Write-Host "====================================================" -ForegroundColor Yellow
           Write-Host ""
           
           # Save IP for later steps
@@ -100,12 +99,12 @@ jobs:
           if ($env:RCLONE_CONF) {
               $configContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:RCLONE_CONF))
               $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
-              Write-Host "✓ Rclone config written successfully" -ForegroundColor Green
+              Write-Host "[OK] Rclone config written successfully" -ForegroundColor Green
           } else {
-              Write-Host "⚠ Warning: RCLONE_CONF secret not found. You'll need to configure rclone manually." -ForegroundColor Yellow
+              Write-Host "[WARNING] RCLONE_CONF secret not found. You'll need to configure rclone manually." -ForegroundColor Yellow
           }
           
-          Write-Host "✓ Rclone installed successfully" -ForegroundColor Green
+          Write-Host "[OK] Rclone installed successfully" -ForegroundColor Green
         shell: powershell
 
       - name: Mount Google Drive
@@ -134,9 +133,9 @@ jobs:
           Start-Sleep -Seconds 10
           
           if (Test-Path "Z:\") {
-              Write-Host "✓ Google Drive mounted successfully as Z:" -ForegroundColor Green
+              Write-Host "[OK] Google Drive mounted successfully as Z:" -ForegroundColor Green
           } else {
-              Write-Host "⚠ Warning: Z: drive not detected. Mount may have failed." -ForegroundColor Yellow
+              Write-Host "[WARNING] Z: drive not detected. Mount may have failed." -ForegroundColor Yellow
           }
         shell: powershell
 
@@ -153,7 +152,7 @@ jobs:
           # Set RDP authentication level (allow less secure for easier testing)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           
-          Write-Host "✓ RDP enabled successfully" -ForegroundColor Green
+          Write-Host "[OK] RDP enabled successfully" -ForegroundColor Green
         shell: powershell
 
       - name: Set RDP Password and Display Connection Info
@@ -168,19 +167,16 @@ jobs:
           net user $username $password
           
           Write-Host ""
-          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Magenta
-          Write-Host "║           RDP CONNECTION INFORMATION             ║" -ForegroundColor Magenta
-          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Magenta
-          Write-Host "║                                                  ║" -ForegroundColor Magenta
-          Write-Host "║  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "║  Username:    $username" -ForegroundColor Cyan
-          Write-Host "║  Password:    $password" -ForegroundColor Cyan
-          Write-Host "║                                                  ║" -ForegroundColor Magenta
-          Write-Host "║  Z: Drive:    Google Drive Stream (Mounted)      ║" -ForegroundColor Green
-          Write-Host "║                                                  ║" -ForegroundColor Magenta
-          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Magenta
-          Write-Host "║  To SHUTDOWN: Create C:\close.txt file           ║" -ForegroundColor Yellow
-          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          Write-Host "====================================================" -ForegroundColor Magenta
+          Write-Host "        RDP CONNECTION INFORMATION" -ForegroundColor Magenta
+          Write-Host "====================================================" -ForegroundColor Magenta
+          Write-Host "  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host "  Username:    $username" -ForegroundColor Cyan
+          Write-Host "  Password:    $password" -ForegroundColor Cyan
+          Write-Host "  Z: Drive:    Google Drive Stream (Mounted)" -ForegroundColor Green
+          Write-Host "----------------------------------------------------" -ForegroundColor Magenta
+          Write-Host "  To SHUTDOWN: Create C:\close.txt file" -ForegroundColor Yellow
+          Write-Host "====================================================" -ForegroundColor Magenta
           Write-Host ""
         shell: powershell
 
@@ -198,9 +194,9 @@ jobs:
               # Check if close.txt exists
               if (Test-Path "C:\close.txt") {
                   Write-Host ""
-                  Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Red
-                  Write-Host "║      SHUTDOWN SIGNAL DETECTED (close.txt)        ║" -ForegroundColor Red
-                  Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Red
+                  Write-Host "====================================================" -ForegroundColor Red
+                  Write-Host "    SHUTDOWN SIGNAL DETECTED (close.txt)" -ForegroundColor Red
+                  Write-Host "====================================================" -ForegroundColor Red
                   Write-Host ""
                   Write-Host "Cleaning up and shutting down..." -ForegroundColor Yellow
                   break
@@ -213,9 +209,9 @@ jobs:
               
               if ($minutesRemaining -le 0) {
                   Write-Host ""
-                  Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Yellow
-                  Write-Host "║         MAXIMUM RUNTIME REACHED ($maxHours hours)        ║" -ForegroundColor Yellow
-                  Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
+                  Write-Host "====================================================" -ForegroundColor Yellow
+                  Write-Host "     MAXIMUM RUNTIME REACHED ($maxHours hours)" -ForegroundColor Yellow
+                  Write-Host "====================================================" -ForegroundColor Yellow
                   Write-Host ""
                   break
               }
@@ -228,5 +224,5 @@ jobs:
               Start-Sleep -Seconds 30
           }
           
-          Write-Host "✓ Workflow completed" -ForegroundColor Green
+          Write-Host "[OK] Workflow completed" -ForegroundColor Green
         shell: powershell
