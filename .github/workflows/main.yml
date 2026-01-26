@@ -119,7 +119,7 @@ jobs:
               "--volname", "Google Drive Stream",
               "--vfs-cache-mode", "off",
               "--drive-chunk-size", "256M",
-              "--transfers", "16",
+              "--transfers", "8",
               "--buffer-size", "64M",
               "--network-mode",
               "--drive-acknowledge-abuse",
