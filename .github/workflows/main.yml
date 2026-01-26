@@ -1,0 +1,138 @@
+name: Windows RDP Learning Environment (Secrets)
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_hours:
+        description: 'Runtime in hours (max 6)'
+        required: false
+        default: '6'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Tailscale
+        run: |
+          Write-Host "=== Installing Tailscale ===" -ForegroundColor Cyan
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+          $path = "$env:TEMP\tailscale-setup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $path -UseBasicParsing
+          Start-Process -FilePath $path -ArgumentList "/quiet", "/norestart" -Wait
+          Start-Sleep -Seconds 10
+        shell: powershell
+
+      - name: Connect to Tailscale
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Write-Host "=== Connecting to Tailscale ===" -ForegroundColor Cyan
+          $ts = "C:\Program Files\Tailscale\tailscale.exe"
+          & $ts up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-runner-rdp"
+          Start-Sleep -Seconds 5
+          $ip = & $ts ip -4
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $ip" -ForegroundColor Green
+        shell: powershell
+
+      - name: Configure Rclone (Using Secrets)
+        env:
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+        run: |
+          Write-Host "=== Configuring Rclone ===" -ForegroundColor Cyan
+          
+          # 1. Install Rclone
+          $zip = "$env:TEMP\rclone.zip"
+          Invoke-WebRequest "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile $zip
+          Expand-Archive $zip -Dest "$env:TEMP\rclone-temp" -Force
+          $src = (Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1).FullName
+          New-Item "C:\rclone" -ItemType Directory -Force | Out-Null
+          Copy-Item "$src\rclone.exe" "C:\rclone\rclone.exe" -Force
+          
+          # 2. Write Config File
+          $confDir = "$env:APPDATA\rclone"; New-Item $confDir -ItemType Directory -Force | Out-Null
+          $conf = "$confDir\rclone.conf"
+          
+          Set-Content $conf "[gdrive2]"
+          Add-Content $conf "type = drive"
+          Add-Content $conf "client_id = $env:GDRIVE_CLIENT_ID"
+          Add-Content $conf "client_secret = $env:GDRIVE_CLIENT_SECRET"
+          Add-Content $conf "scope = drive"
+          
+          # 3. Build Token JSON
+          # We construct the JSON manually to avoid parsing issues with special characters
+          $token = '{"access_token":"","token_type":"Bearer","refresh_token":"' + $env:GDRIVE_REFRESH_TOKEN + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          Add-Content $conf "token = $token"
+          Add-Content $conf "team_drive ="
+          
+          Write-Host "[OK] Rclone configured using Repository Secrets." -ForegroundColor Green
+        shell: powershell
+
+      - name: Mount Drive
+        run: |
+          Write-Host "=== Mounting Drive ===" -ForegroundColor Cyan
+          
+          # Install WinFsp
+          $msi = "$env:TEMP\winfsp.msi"
+          Invoke-WebRequest "https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi" -OutFile $msi
+          Start-Process msiexec.exe "/i $msi /quiet /norestart" -Wait
+          
+          # Mount
+          $log = "$env:TEMP\mount.log"
+          Start-Process "C:\rclone\rclone.exe" @("mount","gdrive2:","Z:","--volname","Google Drive","--vfs-cache-mode","off","--log-file",$log,"--log-level","INFO") -WindowStyle Hidden
+          
+          Start-Sleep -Seconds 15
+          if (Test-Path "Z:\") { 
+            Write-Host "[OK] Mounted Z:" -ForegroundColor Green 
+            Get-ChildItem Z:\ | Select-Object -First 5
+          }
+          else { 
+            Write-Host "[ERROR] Mount failed" -ForegroundColor Red
+            if (Test-Path $log) { Get-Content $log -Tail 20 }
+            exit 1 
+          }
+        shell: powershell
+
+      - name: Enable RDP
+        run: |
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' "fDenyTSConnections" 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' "UserAuthentication" 0
+        shell: powershell
+
+      - name: Display Login Info
+        run: |
+          $pass = "Pass@124421sg"
+          net user $env:USERNAME $pass
+          Write-Host "========================================" -ForegroundColor Magenta
+          Write-Host "  IP: $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host "  User: $env:USERNAME" -ForegroundColor Cyan
+          Write-Host "  Pass: $pass" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Magenta
+        shell: powershell
+
+      - name: Keep Alive
+        run: |
+          $start = Get-Date
+          $limit = [int]"${{ github.event.inputs.runtime_hours || '6' }}" * 60
+          while ($true) {
+            if (Test-Path "C:\close.txt") { break }
+            if (((Get-Date)-$start).TotalMinutes -ge $limit) { break }
+            Start-Sleep 30
+          }
+        shell: powershell
