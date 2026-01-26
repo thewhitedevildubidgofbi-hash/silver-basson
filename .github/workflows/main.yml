@@ -129,8 +129,8 @@ jobs:
           
           Start-Process -FilePath "C:\rclone\rclone.exe" -ArgumentList $mountArgs -WindowStyle Hidden
           
-          # Wait for mount to complete
-          Start-Sleep -Seconds 10
+          # Wait for mount to complete (increased time for reliability)
+          Start-Sleep -Seconds 20
           
           if (Test-Path "Z:\") {
               Write-Host "[OK] Google Drive mounted successfully as Z:" -ForegroundColor Green
@@ -159,8 +159,8 @@ jobs:
         run: |
           Write-Host "=== Setting Up RDP Credentials ===" -ForegroundColor Cyan
           
-          # Set constant password
-          $password = "124421sg"
+          # Set constant password (meets Windows complexity: uppercase, lowercase, number, special char)
+          $password = "Pass@124421sg"
           
           # Set password for current user (runneradmin)
           $username = $env:USERNAME
