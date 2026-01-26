@@ -73,7 +73,9 @@ jobs:
 
       - name: Install and Configure Rclone
         env:
-          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
         run: |
           Write-Host "=== Installing Rclone ===" -ForegroundColor Cyan
           
@@ -95,13 +97,22 @@ jobs:
           $rcloneConfigDir = "$env:APPDATA\rclone"
           New-Item -Path $rcloneConfigDir -ItemType Directory -Force | Out-Null
           
-          # Decode and write rclone.conf from secrets
-          if ($env:RCLONE_CONF) {
-              $configContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:RCLONE_CONF))
+          # Build rclone config dynamically using refresh token (PERMANENT - never expires!)
+          if ($env:GDRIVE_CLIENT_ID -and $env:GDRIVE_CLIENT_SECRET -and $env:GDRIVE_REFRESH_TOKEN) {
+              $configContent = @"
+[gdrive2]
+type = drive
+client_id = $env:GDRIVE_CLIENT_ID
+client_secret = $env:GDRIVE_CLIENT_SECRET
+scope = drive
+token = {"access_token":"","token_type":"Bearer","refresh_token":"$env:GDRIVE_REFRESH_TOKEN","expiry":"2000-01-01T00:00:00.000000000+00:00"}
+team_drive = 
+"@
               $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
-              Write-Host "[OK] Rclone config written successfully" -ForegroundColor Green
+              Write-Host "[OK] Rclone config created with refresh token" -ForegroundColor Green
+              Write-Host "[INFO] Rclone will auto-refresh access token on first use" -ForegroundColor Cyan
           } else {
-              Write-Host "[WARNING] RCLONE_CONF secret not found. You'll need to configure rclone manually." -ForegroundColor Yellow
+              Write-Host "[WARNING] Missing GDRIVE secrets. Check GDRIVE_CLIENT_ID, GDRIVE_CLIENT_SECRET, GDRIVE_REFRESH_TOKEN" -ForegroundColor Yellow
           }
           
           Write-Host "[OK] Rclone installed successfully" -ForegroundColor Green
@@ -119,7 +130,7 @@ jobs:
               "--volname", "Google Drive Stream",
               "--vfs-cache-mode", "off",
               "--drive-chunk-size", "256M",
-              "--transfers", "8",
+              "--transfers", "16",
               "--buffer-size", "64M",
               "--network-mode",
               "--drive-acknowledge-abuse",
