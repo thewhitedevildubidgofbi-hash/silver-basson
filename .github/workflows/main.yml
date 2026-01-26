@@ -1,0 +1,232 @@
+name: Windows RDP Learning Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_hours:
+        description: 'Runtime in hours (max 6)'
+        required: false
+        default: '6'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360  # 6 hours maximum
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Tailscale
+        run: |
+          Write-Host "=== Installing Tailscale ===" -ForegroundColor Cyan
+          
+          # Download Tailscale installer
+          $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+          $installerPath = "$env:TEMP\tailscale-setup.exe"
+          
+          Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
+          
+          # Install silently
+          Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
+          
+          # Wait for installation to complete
+          Start-Sleep -Seconds 10
+          
+          Write-Host "✓ Tailscale installed successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Connect to Tailscale Network
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Write-Host "=== Connecting to Tailscale Network ===" -ForegroundColor Cyan
+          
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          
+          # Authenticate
+          & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-runner-rdp"
+          
+          # Get Tailscale IP
+          Start-Sleep -Seconds 5
+          $tailscaleIP = & $tailscalePath ip -4
+          
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Yellow
+          Write-Host "║       TAILSCALE CONNECTION ESTABLISHED          ║" -ForegroundColor Yellow
+          Write-Host "║                                                  ║" -ForegroundColor Yellow
+          Write-Host "║  Tailscale IP: $tailscaleIP" -ForegroundColor Green
+          Write-Host "║                                                  ║" -ForegroundColor Yellow
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
+          Write-Host ""
+          
+          # Save IP for later steps
+          echo "TAILSCALE_IP=$tailscaleIP" >> $env:GITHUB_ENV
+        shell: powershell
+
+      - name: Install and Configure Rclone
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
+        run: |
+          Write-Host "=== Installing Rclone ===" -ForegroundColor Cyan
+          
+          # Download Rclone
+          $rcloneUrl = "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
+          $zipPath = "$env:TEMP\rclone.zip"
+          
+          Invoke-WebRequest -Uri $rcloneUrl -OutFile $zipPath -UseBasicParsing
+          
+          # Extract to C:\rclone
+          Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\rclone-temp" -Force
+          
+          # Move executable to C:\rclone
+          $extractedFolder = Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1
+          New-Item -Path "C:\rclone" -ItemType Directory -Force | Out-Null
+          Copy-Item -Path "$extractedFolder\rclone.exe" -Destination "C:\rclone\rclone.exe" -Force
+          
+          # Create rclone config directory
+          $rcloneConfigDir = "$env:APPDATA\rclone"
+          New-Item -Path $rcloneConfigDir -ItemType Directory -Force | Out-Null
+          
+          # Decode and write rclone.conf from secrets
+          if ($env:RCLONE_CONF) {
+              $configContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:RCLONE_CONF))
+              $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
+              Write-Host "✓ Rclone config written successfully" -ForegroundColor Green
+          } else {
+              Write-Host "⚠ Warning: RCLONE_CONF secret not found. You'll need to configure rclone manually." -ForegroundColor Yellow
+          }
+          
+          Write-Host "✓ Rclone installed successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Mount Google Drive
+        run: |
+          Write-Host "=== Mounting Google Drive as Z: ===" -ForegroundColor Cyan
+          
+          # Start rclone mount in background
+          $mountArgs = @(
+              "mount",
+              "gdrive2:",
+              "Z:",
+              "--volname", "Google Drive Stream",
+              "--vfs-cache-mode", "off",
+              "--drive-chunk-size", "256M",
+              "--transfers", "16",
+              "--buffer-size", "64M",
+              "--network-mode",
+              "--drive-acknowledge-abuse",
+              "--no-modtime",
+              "--drive-pacer-min-sleep", "10ms"
+          )
+          
+          Start-Process -FilePath "C:\rclone\rclone.exe" -ArgumentList $mountArgs -WindowStyle Hidden
+          
+          # Wait for mount to complete
+          Start-Sleep -Seconds 10
+          
+          if (Test-Path "Z:\") {
+              Write-Host "✓ Google Drive mounted successfully as Z:" -ForegroundColor Green
+          } else {
+              Write-Host "⚠ Warning: Z: drive not detected. Mount may have failed." -ForegroundColor Yellow
+          }
+        shell: powershell
+
+      - name: Enable and Configure RDP
+        run: |
+          Write-Host "=== Enabling RDP Access ===" -ForegroundColor Cyan
+          
+          # Enable Remote Desktop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          
+          # Enable RDP in Windows Firewall
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Set RDP authentication level (allow less secure for easier testing)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          
+          Write-Host "✓ RDP enabled successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Set RDP Password and Display Connection Info
+        run: |
+          Write-Host "=== Setting Up RDP Credentials ===" -ForegroundColor Cyan
+          
+          # Set constant password
+          $password = "124421sg"
+          
+          # Set password for current user (runneradmin)
+          $username = $env:USERNAME
+          net user $username $password
+          
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Magenta
+          Write-Host "║           RDP CONNECTION INFORMATION             ║" -ForegroundColor Magenta
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Magenta
+          Write-Host "║                                                  ║" -ForegroundColor Magenta
+          Write-Host "║  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host "║  Username:    $username" -ForegroundColor Cyan
+          Write-Host "║  Password:    $password" -ForegroundColor Cyan
+          Write-Host "║                                                  ║" -ForegroundColor Magenta
+          Write-Host "║  Z: Drive:    Google Drive Stream (Mounted)      ║" -ForegroundColor Green
+          Write-Host "║                                                  ║" -ForegroundColor Magenta
+          Write-Host "╠══════════════════════════════════════════════════╣" -ForegroundColor Magenta
+          Write-Host "║  To SHUTDOWN: Create C:\close.txt file           ║" -ForegroundColor Yellow
+          Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Magenta
+          Write-Host ""
+        shell: powershell
+
+      - name: Keep Alive and Monitor for Shutdown Signal
+        run: |
+          Write-Host "=== Environment is Running ===" -ForegroundColor Green
+          Write-Host "Monitoring for shutdown signal (C:\close.txt)..." -ForegroundColor Cyan
+          Write-Host ""
+          
+          $startTime = Get-Date
+          $maxHours = [int]"${{ github.event.inputs.runtime_hours || '6' }}"
+          $maxMinutes = $maxHours * 60
+          
+          while ($true) {
+              # Check if close.txt exists
+              if (Test-Path "C:\close.txt") {
+                  Write-Host ""
+                  Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Red
+                  Write-Host "║      SHUTDOWN SIGNAL DETECTED (close.txt)        ║" -ForegroundColor Red
+                  Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Red
+                  Write-Host ""
+                  Write-Host "Cleaning up and shutting down..." -ForegroundColor Yellow
+                  break
+              }
+              
+              # Check elapsed time
+              $elapsed = (Get-Date) - $startTime
+              $minutesElapsed = [int]$elapsed.TotalMinutes
+              $minutesRemaining = $maxMinutes - $minutesElapsed
+              
+              if ($minutesRemaining -le 0) {
+                  Write-Host ""
+                  Write-Host "╔══════════════════════════════════════════════════╗" -ForegroundColor Yellow
+                  Write-Host "║         MAXIMUM RUNTIME REACHED ($maxHours hours)        ║" -ForegroundColor Yellow
+                  Write-Host "╚══════════════════════════════════════════════════╝" -ForegroundColor Yellow
+                  Write-Host ""
+                  break
+              }
+              
+              # Display status every 5 minutes
+              if ($minutesElapsed -gt 0 -and $minutesElapsed % 5 -eq 0) {
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Status: Running | Elapsed: $minutesElapsed min | Remaining: $minutesRemaining min" -ForegroundColor Gray
+              }
+              
+              Start-Sleep -Seconds 30
+          }
+          
+          Write-Host "✓ Workflow completed" -ForegroundColor Green
+        shell: powershell
