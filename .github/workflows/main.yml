@@ -97,24 +97,26 @@ jobs:
           $rcloneConfigDir = "$env:APPDATA\rclone"
           New-Item -Path $rcloneConfigDir -ItemType Directory -Force | Out-Null
           
+          # Build rclone config - write each line separately to avoid escaping issues
+          $configFile = "$rcloneConfigDir\rclone.conf"
           
-          # Build rclone config dynamically using refresh token (PERMANENT - never expires!)
-          # Build config line by line - use single quotes to avoid escaping issues
-          $refreshToken = $env:GDRIVE_REFRESH_TOKEN
-          $tokenJson = '{"access_token":"","token_type":"Bearer","refresh_token":"' + $refreshToken + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          # Create the config file line by line
+          Set-Content -Path $configFile -Value "[gdrive2]"
+          Add-Content -Path $configFile -Value "type = drive"
+          Add-Content -Path $configFile -Value "client_id = $env:GDRIVE_CLIENT_ID"
+          Add-Content -Path $configFile -Value "client_secret = $env:GDRIVE_CLIENT_SECRET"
+          Add-Content -Path $configFile -Value "scope = drive"
           
-          $config = "[gdrive2]`n"
-          $config += "type = drive`n"
-          $config += "client_id = $env:GDRIVE_CLIENT_ID`n"
-          $config += "client_secret = $env:GDRIVE_CLIENT_SECRET`n"
-          $config += "scope = drive`n"
-          $config += "token = $tokenJson`n"
-          $config += "team_drive =`n"
+          # Build token JSON carefully
+          $rt = $env:GDRIVE_REFRESH_TOKEN
+          $tokenLine = 'token = {"access_token":"","token_type":"Bearer","refresh_token":"' + $rt + '","expiry":"2000-01-01T00:00:00.000000000+00:00"}'
+          Add-Content -Path $configFile -Value $tokenLine
+          Add-Content -Path $configFile -Value "team_drive ="
           
-          $config | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force -NoNewline
-          Write-Host "[OK] Rclone config created with refresh token" -ForegroundColor Green
-          Write-Host "[INFO] Rclone will auto-refresh access token on first use" -ForegroundColor Cyan
-          
+          # Show the config for debugging
+          Write-Host "[OK] Rclone config created:" -ForegroundColor Green
+          Get-Content $configFile
+          Write-Host ""
           Write-Host "[OK] Rclone installed successfully" -ForegroundColor Green
         shell: powershell
 
