@@ -119,31 +119,62 @@ jobs:
         run: |
           Write-Host "=== Mounting Google Drive as Z: ===" -ForegroundColor Cyan
           
-          # Start rclone mount in background
-          $mountArgs = @(
-              "mount",
-              "gdrive2:",
-              "Z:",
-              "--volname", "Google Drive Stream",
+          # First, test rclone connection and trigger token refresh
+          Write-Host "Testing rclone connection..." -ForegroundColor Cyan
+          $testResult = & C:\rclone\rclone.exe lsd gdrive2: --max-depth 1 2>&1
+          $testExitCode = $LASTEXITCODE
+          
+          if ($testExitCode -ne 0) {
+              Write-Host "ERROR: Rclone connection test failed!" -ForegroundColor Red
+              Write-Host "Exit code: $testExitCode" -ForegroundColor Red
+              Write-Host "Output: $testResult" -ForegroundColor Red
+              Write-Host ""
+              Write-Host "=== Rclone Config Content ===" -ForegroundColor Yellow
+              Get-Content "$env:APPDATA\rclone\rclone.conf"
+              Write-Host "=== End Config ===" -ForegroundColor Yellow
+              exit 1
+          }
+          
+          Write-Host "[OK] Rclone connection successful!" -ForegroundColor Green
+          Write-Host "Directories found:" -ForegroundColor Cyan
+          Write-Host $testResult
+          
+          # Install WinFsp (required for mount on Windows)
+          Write-Host "Installing WinFsp for mount support..." -ForegroundColor Cyan
+          $winfspUrl = "https://github.com/winfsp/winfsp/releases/download/v2.0/winfsp-2.0.23075.msi"
+          $winfspPath = "$env:TEMP\winfsp.msi"
+          Invoke-WebRequest -Uri $winfspUrl -OutFile $winfspPath -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i", $winfspPath, "/quiet", "/norestart" -Wait
+          Write-Host "[OK] WinFsp installed" -ForegroundColor Green
+          
+          # Now mount the drive
+          Write-Host "Starting rclone mount..." -ForegroundColor Cyan
+          $logFile = "$env:TEMP\rclone_mount.log"
+          
+          Start-Process -FilePath "C:\rclone\rclone.exe" -ArgumentList @(
+              "mount", "gdrive2:", "Z:",
+              "--volname", "Google Drive",
               "--vfs-cache-mode", "off",
-              "--drive-chunk-size", "256M",
-              "--transfers", "16",
-              "--buffer-size", "64M",
-              "--network-mode",
-              "--drive-acknowledge-abuse",
-              "--no-modtime",
-              "--drive-pacer-min-sleep", "10ms"
-          )
+              "--log-file", $logFile,
+              "--log-level", "INFO"
+          ) -WindowStyle Hidden
           
-          Start-Process -FilePath "C:\rclone\rclone.exe" -ArgumentList $mountArgs -WindowStyle Hidden
-          
-          # Wait for mount to complete (increased time for reliability)
-          Start-Sleep -Seconds 20
+          # Wait for mount
+          Write-Host "Waiting for mount to complete..." -ForegroundColor Cyan
+          Start-Sleep -Seconds 15
           
           if (Test-Path "Z:\") {
               Write-Host "[OK] Google Drive mounted successfully as Z:" -ForegroundColor Green
+              Get-ChildItem Z:\ -ErrorAction SilentlyContinue | Select-Object -First 5
           } else {
-              Write-Host "[WARNING] Z: drive not detected. Mount may have failed." -ForegroundColor Yellow
+              Write-Host "[ERROR] Z: drive not mounted!" -ForegroundColor Red
+              Write-Host "=== Rclone Mount Log ===" -ForegroundColor Yellow
+              if (Test-Path $logFile) {
+                  Get-Content $logFile -Tail 30
+              } else {
+                  Write-Host "No log file found"
+              }
+              Write-Host "=== End Log ===" -ForegroundColor Yellow
           }
         shell: powershell
 
