@@ -87,7 +87,7 @@ jobs:
           Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\rclone-temp" -Force
           
           # Move executable to C:\rclone
-          $extractedFolder = Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1
+          $extractedFolder = (Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1).FullName
           New-Item -Path "C:\rclone" -ItemType Directory -Force | Out-Null
           Copy-Item -Path "$extractedFolder\rclone.exe" -Destination "C:\rclone\rclone.exe" -Force
           
