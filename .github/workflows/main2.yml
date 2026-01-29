@@ -1,0 +1,147 @@
+name: Windows RDP Learning Environment updated
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_hours:
+        description: 'Runtime in hours (max 6)'
+        required: false
+        default: '6'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360  # 6 hours maximum
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Tailscale
+        run: |
+          Write-Host "=== Installing Tailscale ===" -ForegroundColor Cyan
+          
+          $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+          $installerPath = "$env:TEMP\tailscale-setup.exe"
+          
+          Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
+          Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
+          Start-Sleep -Seconds 10
+          
+          Write-Host "[OK] Tailscale installed successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Connect to Tailscale Network
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Write-Host "=== Connecting to Tailscale Network ===" -ForegroundColor Cyan
+          
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+          & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-runner-rdp"
+          
+          Start-Sleep -Seconds 5
+          $tailscaleIP = & $tailscalePath ip -4
+          
+          Write-Host "Tailscale IP: $tailscaleIP" -ForegroundColor Green
+          echo "TAILSCALE_IP=$tailscaleIP" >> $env:GITHUB_ENV
+        shell: powershell
+
+      - name: Install RaiDrive
+        run: |
+          Write-Host "=== Installing RaiDrive ===" -ForegroundColor Cyan
+          choco install raidrive --confirm
+          Write-Host "[OK] RaiDrive installed successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Configure Chrome (Shortcut & Association)
+        run: |
+          Write-Host "=== Setting up Google Chrome ===" -ForegroundColor Cyan
+
+          # 1. Create Desktop Shortcut for easy access
+          $TargetFile = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+          $ShortcutFile = "$env:USERPROFILE\Desktop\Google Chrome.lnk"
+          $WScriptShell = New-Object -ComObject WScript.Shell
+          $Shortcut = $WScriptShell.CreateShortcut($ShortcutFile)
+          $Shortcut.TargetPath = $TargetFile
+          $Shortcut.Save()
+          Write-Host "[OK] Chrome Desktop shortcut created" -ForegroundColor Green
+
+          # 2. Register Chrome as handler for HTML files (Best Effort)
+          cmd /c "ftype ChromeHTML=""$TargetFile"" -- ""%1"""
+          cmd /c "assoc .html=ChromeHTML"
+          cmd /c "assoc .htm=ChromeHTML"
+          
+          Write-Host "[OK] Chrome file associations registered" -ForegroundColor Green
+        shell: powershell
+
+      - name: Enable and Configure RDP
+        run: |
+          Write-Host "=== Enabling RDP Access ===" -ForegroundColor Cyan
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          Write-Host "[OK] RDP enabled successfully" -ForegroundColor Green
+        shell: powershell
+
+      - name: Set RDP Password and Display Connection Info
+        run: |
+          Write-Host "=== Setting Up RDP Credentials ===" -ForegroundColor Cyan
+          
+          $password = "Pass@124421sg"
+          $username = $env:USERNAME
+          net user $username $password
+          
+          Write-Host ""
+          Write-Host "====================================================" -ForegroundColor Magenta
+          Write-Host "        RDP CONNECTION INFORMATION" -ForegroundColor Magenta
+          Write-Host "====================================================" -ForegroundColor Magenta
+          Write-Host "  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host "  Username:    $username" -ForegroundColor Cyan
+          Write-Host "  Password:    $password" -ForegroundColor Cyan
+          Write-Host "  Browser:     Chrome (Shortcut on Desktop)" -ForegroundColor Yellow
+          Write-Host "  Storage:     RaiDrive (Config required on login)" -ForegroundColor Yellow
+          Write-Host "----------------------------------------------------" -ForegroundColor Magenta
+          Write-Host "  To SHUTDOWN: Create C:\close.txt file" -ForegroundColor Yellow
+          Write-Host "====================================================" -ForegroundColor Magenta
+          Write-Host ""
+        shell: powershell
+
+      - name: Keep Alive and Monitor for Shutdown Signal
+        run: |
+          Write-Host "=== Environment is Running ===" -ForegroundColor Green
+          Write-Host "Monitoring for shutdown signal (C:\close.txt)..." -ForegroundColor Cyan
+          
+          $startTime = Get-Date
+          $maxHours = [int]"${{ github.event.inputs.runtime_hours || '6' }}"
+          $maxMinutes = $maxHours * 60
+          
+          while ($true) {
+              if (Test-Path "C:\close.txt") {
+                  Write-Host "SHUTDOWN SIGNAL DETECTED" -ForegroundColor Red
+                  break
+              }
+              
+              $elapsed = (Get-Date) - $startTime
+              $minutesElapsed = [int]$elapsed.TotalMinutes
+              
+              if (($maxMinutes - $minutesElapsed) -le 0) {
+                  Write-Host "MAXIMUM RUNTIME REACHED" -ForegroundColor Yellow
+                  break
+              }
+              
+              if ($minutesElapsed -gt 0 -and $minutesElapsed % 5 -eq 0) {
+                  Write-Host "Status: Running | Elapsed: $minutesElapsed min" -ForegroundColor Gray
+              }
+              Start-Sleep -Seconds 30
+          }
+          Write-Host "[OK] Workflow completed" -ForegroundColor Green
+        shell: powershell
