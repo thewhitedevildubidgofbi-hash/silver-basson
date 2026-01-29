@@ -19,23 +19,21 @@ on:
 jobs:
   setup-rdp:
     runs-on: windows-latest
-    timeout-minutes: 360  # 6 hours maximum
+    timeout-minutes: 360
     
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # --- NETWORK SETUP ---
       - name: Install Tailscale
         run: |
           Write-Host "=== Installing Tailscale ===" -ForegroundColor Cyan
-          
           $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
           $installerPath = "$env:TEMP\tailscale-setup.exe"
-          
           Invoke-WebRequest -Uri $tailscaleUrl -OutFile $installerPath -UseBasicParsing
           Start-Process -FilePath $installerPath -ArgumentList "/quiet", "/norestart" -Wait
           Start-Sleep -Seconds 10
-          
           Write-Host "[OK] Tailscale installed successfully" -ForegroundColor Green
         shell: powershell
 
@@ -44,58 +42,100 @@ jobs:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           Write-Host "=== Connecting to Tailscale Network ===" -ForegroundColor Cyan
-          
           $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
           & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-runner-rdp"
-          
           Start-Sleep -Seconds 5
           $tailscaleIP = & $tailscalePath ip -4
-          
-          Write-Host "Tailscale IP: $tailscaleIP" -ForegroundColor Green
           echo "TAILSCALE_IP=$tailscaleIP" >> $env:GITHUB_ENV
+          Write-Host "Tailscale IP: $tailscaleIP" -ForegroundColor Green
         shell: powershell
 
-      - name: Install RaiDrive
+      # --- FILE PREPARATION ---
+      - name: Configure Rclone (Downloader)
+        env:
+          RCLONE_CONF: ${{ secrets.RCLONE_CONF }}
         run: |
-          Write-Host "=== Installing RaiDrive ===" -ForegroundColor Cyan
-          choco install raidrive --confirm
-          Write-Host "[OK] RaiDrive installed successfully" -ForegroundColor Green
+          Write-Host "=== Configuring Rclone ===" -ForegroundColor Cyan
+          Invoke-WebRequest -Uri "https://downloads.rclone.org/rclone-current-windows-amd64.zip" -OutFile "$env:TEMP\rclone.zip" -UseBasicParsing
+          Expand-Archive -Path "$env:TEMP\rclone.zip" -DestinationPath "$env:TEMP\rclone-temp" -Force
+          $extractedFolder = (Get-ChildItem "$env:TEMP\rclone-temp" | Select-Object -First 1).FullName
+          New-Item -Path "C:\rclone" -ItemType Directory -Force | Out-Null
+          Copy-Item -Path "$extractedFolder\rclone.exe" -Destination "C:\rclone\rclone.exe" -Force
+          
+          $rcloneConfigDir = "$env:APPDATA\rclone"
+          New-Item -Path $rcloneConfigDir -ItemType Directory -Force | Out-Null
+          $configContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($env:RCLONE_CONF))
+          $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
+        shell: powershell
+
+      - name: Download Setup Files (Desktop)
+        run: |
+          Write-Host "=== Downloading Setup Files to Desktop ===" -ForegroundColor Cyan
+          
+          # --- PATH CONFIGURATION ---
+          # Assuming files are in the Root of My Drive (Default location)
+          $RaiDriveSource = "gdrive2:RaiDrive_Mount.msi" 
+          $VMwareSource   = "gdrive2:VMware-workstation.exe"
+          # --------------------------
+          
+          $DesktopPath = "$env:USERPROFILE\Desktop"
+          
+          Write-Host "Downloading RaiDrive ($RaiDriveSource)..."
+          C:\rclone\rclone.exe copy $RaiDriveSource $DesktopPath -P
+          
+          Write-Host "Downloading VMware ($VMwareSource)..."
+          C:\rclone\rclone.exe copy $VMwareSource $DesktopPath -P
+          
+          Write-Host "[OK] Files downloaded to Desktop" -ForegroundColor Green
         shell: powershell
 
       - name: Configure Chrome (Shortcut & Association)
         run: |
           Write-Host "=== Setting up Google Chrome ===" -ForegroundColor Cyan
-
-          # 1. Create Desktop Shortcut for easy access
           $TargetFile = "C:\Program Files\Google\Chrome\Application\chrome.exe"
           $ShortcutFile = "$env:USERPROFILE\Desktop\Google Chrome.lnk"
           $WScriptShell = New-Object -ComObject WScript.Shell
           $Shortcut = $WScriptShell.CreateShortcut($ShortcutFile)
           $Shortcut.TargetPath = $TargetFile
           $Shortcut.Save()
-          Write-Host "[OK] Chrome Desktop shortcut created" -ForegroundColor Green
-
-          # 2. Register Chrome as handler for HTML files (Best Effort)
           cmd /c "ftype ChromeHTML=""$TargetFile"" -- ""%1"""
           cmd /c "assoc .html=ChromeHTML"
-          cmd /c "assoc .htm=ChromeHTML"
-          
-          Write-Host "[OK] Chrome file associations registered" -ForegroundColor Green
         shell: powershell
 
-      - name: Enable and Configure RDP
+      # --- INSTALLATION PHASE 1 (Pre-Login) ---
+      - name: Install VMware (Phase 1)
+        run: |
+          Write-Host "=== Installing VMware Workstation (Silent) ===" -ForegroundColor Cyan
+          $VMwarePath = "$env:USERPROFILE\Desktop\VMware-workstation.exe"
+          
+          if (Test-Path $VMwarePath) {
+              # VMware Silent Args: /s (silent), /v (pass args to msi), /qn (no UI), suppress reboot
+              $args = '/s /v"/qn EULAS_AGREED=1 REBOOT=ReallySuppress"'
+              
+              $proc = Start-Process -FilePath $VMwarePath -ArgumentList $args -Wait -PassThru
+              
+              if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) { 
+                  Write-Host "[OK] VMware Installed Successfully" -ForegroundColor Green 
+              } else { 
+                  Write-Host "[ERROR] VMware exited with code $($proc.ExitCode)" -ForegroundColor Red 
+              }
+          } else {
+              Write-Host "[ERROR] VMware installer not found on Desktop!" -ForegroundColor Red
+          }
+        shell: powershell
+
+      # --- ACCESS SETUP ---
+      - name: Enable RDP
         run: |
           Write-Host "=== Enabling RDP Access ===" -ForegroundColor Cyan
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          Write-Host "[OK] RDP enabled successfully" -ForegroundColor Green
         shell: powershell
 
       - name: Set RDP Password and Display Connection Info
         run: |
           Write-Host "=== Setting Up RDP Credentials ===" -ForegroundColor Cyan
-          
           $password = "Pass@124421sg"
           $username = $env:USERNAME
           net user $username $password
@@ -107,41 +147,47 @@ jobs:
           Write-Host "  IP Address:  $env:TAILSCALE_IP" -ForegroundColor Cyan
           Write-Host "  Username:    $username" -ForegroundColor Cyan
           Write-Host "  Password:    $password" -ForegroundColor Cyan
-          Write-Host "  Browser:     Chrome (Shortcut on Desktop)" -ForegroundColor Yellow
-          Write-Host "  Storage:     RaiDrive (Config required on login)" -ForegroundColor Yellow
           Write-Host "----------------------------------------------------" -ForegroundColor Magenta
-          Write-Host "  To SHUTDOWN: Create C:\close.txt file" -ForegroundColor Yellow
+          Write-Host "  STATUS:      VMware is INSTALLED." -ForegroundColor Green
+          Write-Host "               RaiDrive will install NOW (Phase 2)." -ForegroundColor Yellow
+          Write-Host "               Connect IMMEDIATELY to monitor it." -ForegroundColor Yellow
           Write-Host "====================================================" -ForegroundColor Magenta
           Write-Host ""
         shell: powershell
 
-      - name: Keep Alive and Monitor for Shutdown Signal
+      # --- INSTALLATION PHASE 2 (Post-Login) ---
+      - name: Install RaiDrive (Phase 2)
         run: |
-          Write-Host "=== Environment is Running ===" -ForegroundColor Green
-          Write-Host "Monitoring for shutdown signal (C:\close.txt)..." -ForegroundColor Cyan
+          Write-Host "=== Installing RaiDrive (Silent) ===" -ForegroundColor Cyan
+          $RaiDrivePath = "$env:USERPROFILE\Desktop\RaiDrive_Mount.msi"
           
+          if (Test-Path $RaiDrivePath) {
+              # MSI Silent Args: /i <file> /qn (quiet no UI) /norestart
+              $proc = Start-Process "msiexec.exe" -ArgumentList "/i `"$RaiDrivePath`" /qn /norestart" -Wait -PassThru
+              
+              if ($proc.ExitCode -eq 0) { 
+                  Write-Host "[OK] RaiDrive Installed Successfully" -ForegroundColor Green 
+              } else { 
+                  Write-Host "[WARNING] RaiDrive exit code: $($proc.ExitCode). Check screen for prompts." -ForegroundColor Yellow 
+              }
+          } else {
+              Write-Host "[ERROR] RaiDrive installer not found on Desktop!" -ForegroundColor Red
+          }
+        shell: powershell
+
+      # --- LOOP ---
+      - name: Keep Alive
+        run: |
+          Write-Host "Monitoring for shutdown signal (C:\close.txt)..." -ForegroundColor Cyan
           $startTime = Get-Date
           $maxHours = [int]"${{ github.event.inputs.runtime_hours || '6' }}"
           $maxMinutes = $maxHours * 60
-          
           while ($true) {
-              if (Test-Path "C:\close.txt") {
-                  Write-Host "SHUTDOWN SIGNAL DETECTED" -ForegroundColor Red
-                  break
-              }
-              
+              if (Test-Path "C:\close.txt") { break }
               $elapsed = (Get-Date) - $startTime
               $minutesElapsed = [int]$elapsed.TotalMinutes
-              
-              if (($maxMinutes - $minutesElapsed) -le 0) {
-                  Write-Host "MAXIMUM RUNTIME REACHED" -ForegroundColor Yellow
-                  break
-              }
-              
-              if ($minutesElapsed -gt 0 -and $minutesElapsed % 5 -eq 0) {
-                  Write-Host "Status: Running | Elapsed: $minutesElapsed min" -ForegroundColor Gray
-              }
+              if (($maxMinutes - $minutesElapsed) -le 0) { break }
+              if ($minutesElapsed % 5 -eq 0) { Write-Host "Running... $minutesElapsed min elapsed" }
               Start-Sleep -Seconds 30
           }
-          Write-Host "[OK] Workflow completed" -ForegroundColor Green
         shell: powershell
