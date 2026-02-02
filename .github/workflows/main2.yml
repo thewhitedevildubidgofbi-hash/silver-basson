@@ -85,9 +85,9 @@ jobs:
           
           # 2. DOWNLOAD "WINDOWS" FOLDER TO D: DRIVE
           Write-Host "--------------------------------------"
-          Write-Host "Downloading 'windows' folder to D:\windows..." -ForegroundColor Yellow
+          Write-Host "Downloading 'windows' folder to D:\Windows..." -ForegroundColor Yellow
           
-          $WinSource = "gdrive2:windows"
+          $WinSource = "gdrive2:Windows"
           $WinDest   = "D:\windows"
           
           # Check if D: exists (usually it does on GitHub Runners)
