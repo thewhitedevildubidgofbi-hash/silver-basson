@@ -68,25 +68,38 @@ jobs:
           $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
         shell: powershell
 
-      - name: Download Setup Files (Desktop)
+      - name: Download Files (Desktop & D: Drive)
         run: |
-          Write-Host "=== Downloading Setup Files to Desktop ===" -ForegroundColor Cyan
+          Write-Host "=== Downloading Files from Drive ===" -ForegroundColor Cyan
           
-          # --- PATH CONFIGURATION ---
-          # Assuming files are in the Root of My Drive (Default location)
+          # 1. DOWNLOAD INSTALLERS TO DESKTOP
+          $DesktopPath = "$env:USERPROFILE\Desktop"
           $RaiDriveSource = "gdrive2:RaiDrive_Mount.msi" 
           $VMwareSource   = "gdrive2:VMware-workstation.exe"
-          # --------------------------
           
-          $DesktopPath = "$env:USERPROFILE\Desktop"
-          
-          Write-Host "Downloading RaiDrive ($RaiDriveSource)..."
+          Write-Host "Downloading RaiDrive..."
           C:\rclone\rclone.exe copy $RaiDriveSource $DesktopPath -P
           
-          Write-Host "Downloading VMware ($VMwareSource)..."
+          Write-Host "Downloading VMware..."
           C:\rclone\rclone.exe copy $VMwareSource $DesktopPath -P
           
-          Write-Host "[OK] Files downloaded to Desktop" -ForegroundColor Green
+          # 2. DOWNLOAD "WINDOWS" FOLDER TO D: DRIVE
+          Write-Host "--------------------------------------"
+          Write-Host "Downloading 'windows' folder to D:\windows..." -ForegroundColor Yellow
+          
+          $WinSource = "gdrive2:windows"
+          $WinDest   = "D:\windows"
+          
+          # Check if D: exists (usually it does on GitHub Runners)
+          if (Test-Path "D:\") {
+              C:\rclone\rclone.exe copy $WinSource $WinDest -P --transfers=16
+              Write-Host "[OK] Folder downloaded to D:\windows" -ForegroundColor Green
+          } else {
+              Write-Host "[WARNING] D: Drive not found! Downloading to C:\windows_folder instead." -ForegroundColor Red
+              C:\rclone\rclone.exe copy $WinSource "C:\windows_folder" -P
+          }
+          
+          Write-Host "[OK] All downloads complete" -ForegroundColor Green
         shell: powershell
 
       - name: Configure Chrome (Shortcut & Association)
@@ -149,8 +162,8 @@ jobs:
           Write-Host "  Password:    $password" -ForegroundColor Cyan
           Write-Host "----------------------------------------------------" -ForegroundColor Magenta
           Write-Host "  STATUS:      VMware is INSTALLED." -ForegroundColor Green
+          Write-Host "               Windows folder is on D: DRIVE." -ForegroundColor Green
           Write-Host "               RaiDrive will install NOW (Phase 2)." -ForegroundColor Yellow
-          Write-Host "               Connect IMMEDIATELY to monitor it." -ForegroundColor Yellow
           Write-Host "====================================================" -ForegroundColor Magenta
           Write-Host ""
         shell: powershell
