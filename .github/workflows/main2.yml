@@ -68,7 +68,7 @@ jobs:
           $configContent | Out-File -FilePath "$rcloneConfigDir\rclone.conf" -Encoding utf8 -Force
         shell: powershell
 
-      - name: Download Files (Desktop & D: Drive)
+      - name: "Download Files (Desktop & D: Drive)"
         run: |
           Write-Host "=== Downloading Files from Drive ===" -ForegroundColor Cyan
           
